@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Hunter — Availability Checker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        display: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --bg: #060B18;
+            --fg: #E2E8F0;
+            --muted: #64748B;
+            --accent: #00E5A0;
+            --accent-dim: rgba(0,229,160,0.12);
+            --danger: #FF4757;
+            --danger-dim: rgba(255,71,87,0.12);
+            --warning: #F59E0B;
+            --border: rgba(148,163,184,0.1);
+            --card: rgba(12,20,38,0.85);
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family:'Space Grotesk',sans-serif;
+            background:var(--bg);
+            color:var(--fg);
+            min-height:100vh;
+            overflow-x:hidden;
+        }
+        .bg-effects { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+        .blob {
+            position:absolute; border-radius:50%;
+            filter:blur(100px); opacity:0.35;
+            animation:blobFloat 25s ease-in-out infinite;
+        }
+        .blob-1 { width:500px;height:500px;background:radial-gradient(circle,#00E5A0,transparent);top:-150px;left:-120px;animation-delay:0s; }
+        .blob-2 { width:420px;height:420px;background:radial-gradient(circle,#0EA5E9,transparent);bottom:-120px;right:-80px;animation-delay:-9s; }
+        .blob-3 { width:350px;height:350px;background:radial-gradient(circle,#F59E0B,transparent);top:50%;left:55%;animation-delay:-17s;opacity:0.15; }
+        @keyframes blobFloat {
+            0%,100%{transform:translate(0,0) scale(1);}
+            33%{transform:translate(60px,-40px) scale(1.08);}
+            66%{transform:translate(-30px,50px) scale(0.94);}
+        }
+        .grid-overlay {
+            position:fixed; inset:0; z-index:1; pointer-events:none;
+            background-image:
+                linear-gradient(rgba(148,163,184,0.025) 1px,transparent 1px),
+                linear-gradient(90deg,rgba(148,163,184,0.025) 1px,transparent 1px);
+            background-size:64px 64px;
+        }
+        .main-content { position:relative; z-index:10; }
+
+        /* Search input */
+        .search-input {
+            background:rgba(10,18,36,0.7);
+            border:1.5px solid var(--border);
+            backdrop-filter:blur(20px);
+            transition:all .3s ease;
+            font-family:'Space Grotesk',sans-serif;
+        }
+        .search-input:focus {
+            border-color:var(--accent);
+            box-shadow:0 0 0 3px var(--accent-dim),0 0 40px rgba(0,229,160,0.08);
+            outline:none;
+        }
+
+        /* Mode buttons */
+        .mode-btn {
+            transition:all .25s ease;
+            border:1.5px solid var(--border);
+            background:transparent;
+            color:var(--muted);
+            cursor:pointer;
+            font-family:'Space Grotesk',sans-serif;
+        }
+        .mode-btn.active {
+            background:var(--accent-dim);
+            border-color:var(--accent);
+            color:var(--accent);
+        }
+        .mode-btn:hover:not(.active) {
+            border-color:rgba(148,163,184,0.25);
+            color:var(--fg);
+        }
+
+        /* Search button */
+        .search-btn {
+            background:linear-gradient(135deg,#00E5A0,#00C48F);
+            color:#060B18;
+            font-weight:700;
+            transition:all .25s ease;
+            cursor:pointer;
+            font-family:'Space Grotesk',sans-serif;
+            border:none;
+        }
+        .search-btn:hover:not(:disabled) {
+            transform:translateY(-2px);
+            box-shadow:0 8px 32px rgba(0,229,160,0.3);
+        }
+        .search-btn:active:not(:disabled) { transform:translateY(0); }
+        .search-btn:disabled { opacity:.5; cursor:not-allowed; transform:none; box-shadow:none; }
+
+        /* Cards */
+        .result-card {
+            background:var(--card);
+            border:1.5px solid var(--border);
+            backdrop-filter:blur(24px);
+            transition:all .3s ease;
+        }
+        .result-card.available-card {
+            border-color:rgba(0,229,160,0.3);
+        }
+        .result-card.available-card:hover {
+            border-color:rgba(0,229,160,0.5);
+            box-shadow:0 8px 40px rgba(0,229,160,0.1);
+        }
+        .result-card.registered-card {
+            border-color:rgba(255,71,87,0.18);
+        }
+
+        /* Status badges */
+        .status-badge {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:5px 14px; border-radius:9999px;
+            font-size:12px; font-weight:700;
+            letter-spacing:.8px; text-transform:uppercase;
+        }
+        .badge-available { background:var(--accent-dim); color:var(--accent); }
+        .badge-registered { background:var(--danger-dim); color:var(--danger); }
+        .badge-checking { background:rgba(245,158,11,0.12); color:var(--warning); }
+
+        /* Pulse glow for available */
+        @keyframes pulseGlow {
+            0%,100%{box-shadow:0 0 0 0 rgba(0,229,160,0);}
+            50%{box-shadow:0 0 24px 3px rgba(0,229,160,0.12);}
+        }
+        .pulse-glow { animation:pulseGlow 2.5s ease-in-out infinite; }
+
+        /* Spinner */
+        .spinner {
+            border:3px solid var(--border); border-top-color:var(--accent);
+            border-radius:50%; width:28px; height:28px;
+            animation:spin .7s linear infinite;
+        }
+        @keyframes spin { to{transform:rotate(360deg);} }
+
+        /* Skeleton */
+        .skeleton {
+            background:linear-gradient(90deg,rgba(15,23,42,0.4),rgba(30,41,59,0.4),rgba(15,23,42,0.4));
+            background-size:200% 100%;
+            animation:shimmer 1.5s ease-in-out infinite;
+            border-radius:6px;
+        }
+        @keyframes shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+
+        /* Toast */
+        .toast-item {
+            background:var(--card); border:1px solid var(--border);
+            backdrop-filter:blur(20px);
+            transform:translateX(120%);
+            transition:transform .4s cubic-bezier(.16,1,.3,1);
+            border-radius:12px; padding:12px 20px;
+            display:flex; align-items:center; gap:10px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.4);
+            max-width:360px;
+        }
+        .toast-item.show { transform:translateX(0); }
+
+        /* Progress bar */
+        .progress-track { height:3px; background:var(--border); border-radius:2px; overflow:hidden; }
+        .progress-fill { height:100%; background:linear-gradient(90deg,#00E5A0,#00C48F); border-radius:2px; transition:width .3s ease; }
+
+        /* Detail row */
+        .detail-row {
+            display:flex; justify-content:space-between; align-items:center;
+            padding:12px 0; border-bottom:1px solid var(--border);
+            gap:16px;
+        }
+        .detail-row:last-child { border-bottom:none; }
+
+        /* TLD grid items */
+        .tld-item {
+            background:rgba(10,18,36,0.5);
+            border:1.5px solid var(--border);
+            border-radius:14px; padding:18px 20px;
+            transition:all .3s ease; cursor:pointer;
+        }
+        .tld-item:hover { transform:translateY(-1px); }
+        .tld-item.tld-available {
+            border-color:rgba(0,229,160,0.35);
+            background:rgba(0,229,160,0.04);
+        }
+        .tld-item.tld-available:hover {
+            box-shadow:0 4px 20px rgba(0,229,160,0.1);
+        }
+        .tld-item.tld-registered {
+            border-color:rgba(255,71,87,0.18);
+            background:rgba(255,71,87,0.02);
+        }
+        .tld-item.tld-checking {
+            border-color:rgba(245,158,11,0.25);
+        }
+        .tld-item.tld-error {
+            border-color:rgba(148,163,184,0.15);
+            opacity:.7;
+        }
+
+        /* Entry animation */
+        @keyframes fadeInUp {
+            from{opacity:0;transform:translateY(24px);}
+            to{opacity:1;transform:translateY(0);}
+        }
+        .anim-in { animation:fadeInUp .5s ease forwards; }
+
+        /* Stagger children */
+        .stagger > * { opacity:0; animation:fadeInUp .4s ease forwards; }
+        .stagger > *:nth-child(1){animation-delay:.05s;}
+        .stagger > *:nth-child(2){animation-delay:.1s;}
+        .stagger > *:nth-child(3){animation-delay:.15s;}
+        .stagger > *:nth-child(4){animation-delay:.2s;}
+        .stagger > *:nth-child(5){animation-delay:.25s;}
+        .stagger > *:nth-child(6){animation-delay:.3s;}
+        .stagger > *:nth-child(7){animation-delay:.35s;}
+        .stagger > *:nth-child(8){animation-delay:.4s;}
+        .stagger > *:nth-child(9){animation-delay:.45s;}
+        .stagger > *:nth-child(10){animation-delay:.5s;}
+        .stagger > *:nth-child(11){animation-delay:.55s;}
+        .stagger > *:nth-child(12){animation-delay:.6s;}
+        .stagger > *:nth-child(13){animation-delay:.65s;}
+        .stagger > *:nth-child(14){animation-delay:.7s;}
+
+        /* Scrollbar */
+        ::-webkit-scrollbar{width:6px;}
+        ::-webkit-scrollbar-track{background:transparent;}
+        ::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.2);border-radius:3px;}
+
+        /* Hero title gradient */
+        .title-gradient {
+            background:linear-gradient(135deg,#00E5A0 0%,#0EA5E9 50%,#00E5A0 100%);
+            background-size:200% auto;
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            background-clip:text;
+            animation:gradientShift 4s ease-in-out infinite;
+        }
+        @keyframes gradientShift {
+            0%,100%{background-position:0% center;}
+            50%{background-position:100% center;}
+        }
+
+        @media(prefers-reduced-motion:reduce){
+            *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;}
+        }
+        @media(max-width:640px){
+            .blob{opacity:.18;}
+        }
+    </style>
+</head>
+<body>
+    <!-- Background effects -->
+    <div class="bg-effects">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+    <div class="grid-overlay"></div>
+
+    <!-- Main content -->
+    <main class="main-content min-h-screen flex flex-col">
+        <!-- Hero -->
+        <section class="pt-14 sm:pt-20 pb-6 px-4 sm:px-6">
+            <div class="max-w-3xl mx-auto text-center">
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[rgba(0,229,160,0.2)] bg-[rgba(0,229,160,0.05)] mb-6">
+                    <span class="w-2 h-2 rounded-full bg-[#00E5A0] animate-pulse"></span>
+                    <span class="text-sm text-[#00E5A0] font-medium">Live DNS &amp; RDAP Lookup</span>
+                </div>
+                <h1 class="text-5xl sm:text-7xl font-bold tracking-tight title-gradient leading-tight">
+                    Domain Hunter
+                </h1>
+                <p class="mt-5 text-base sm:text-lg text-[#94A3B8] max-w-xl mx-auto leading-relaxed">
+                    Instantly check domain availability across 14+ TLDs using real-time DNS resolution and RDAP registry data — entirely in your browser.
+                </p>
+            </div>
+        </section>
+
+        <!-- Search -->
+        <section class="px-4 sm:px-6 pb-6">
+            <div class="max-w-2xl mx-auto">
+                <!-- Mode toggle -->
+                <div class="flex gap-2 mb-5 justify-center" role="tablist">
+                    <button class="mode-btn active rounded-xl px-5 py-2.5 text-sm font-medium" data-mode="single" onclick="setMode('single')" role="tab" aria-selected="true">
+                        <i class="fas fa-search mr-2"></i>Single Domain
+                    </button>
+                    <button class="mode-btn rounded-xl px-5 py-2.5 text-sm font-medium" data-mode="multi" onclick="setMode('multi')" role="tab" aria-selected="false">
+                        <i class="fas fa-globe mr-2"></i>All TLDs
+                    </button>
+                </div>
+
+                <!-- Search box -->
+                <div class="flex gap-3">
+                    <div class="flex-1 relative">
+                        <div class="absolute left-4 top-1/2 -translate-y-1/2 text-[#475569]">
+                            <i class="fas fa-at text-sm"></i>
+                        </div>
+                        <input
+                            type="text"
+                            id="searchInput"
+                            class="search-input w-full rounded-xl pl-11 pr-4 py-4 text-base text-white placeholder:text-[#3E4C63]"
+                            placeholder="Enter domain name (e.g. myproject.com)"
+                            autocomplete="off"
+                            spellcheck="false"
+                            aria-label="Domain name or keyword"
+                            onkeydown="if(event.key==='Enter')handleSearch()"
+                        >
+                    </div>
+                    <button id="searchBtn" class="search-btn rounded-xl px-7 py-4 text-base flex items-center gap-2" onclick="handleSearch()" aria-label="Search">
+                        <span id="searchBtnText">Search</span>
+                        <i id="searchBtnIcon" class="fas fa-arrow-right text-sm"></i>
+                    </button>
+                </div>
+                <p id="hintText" class="mt-3 text-sm text-[#3E4C63] text-center">
+                    Enter a full domain name to check availability and registration details
+                </p>
+            </div>
+        </section>
+
+        <!-- Results -->
+        <section class="px-4 sm:px-6 pb-20 flex-1">
+            <div id="resultsContainer" class="max-w-4xl mx-auto"></div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="px-4 sm:px-6 py-8 border-t border-[rgba(148,163,184,0.06)]">
+            <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#3E4C63]">
+                <div class="flex items-center gap-4">
+                    <span>Powered by Google DNS-over-HTTPS &amp; RDAP</span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span>All checks run locally in your browser</span>
+                    <span class="w-1 h-1 rounded-full bg-[#3E4C63]"></span>
+                    <span>No data sent to any server</span>
+                </div>
+            </div>
+        </footer>
+    </main>
+
+    <!-- Toasts -->
+    <div id="toastContainer" class="fixed top-5 right-5 z-50 flex flex-col gap-3" aria-live="polite"></div>
+
+    <script>
+    /* ========================================
+       Configuration
+    ======================================== */
+    const TOP_TLDS = [
+        "com", "net", "org", "io", "co", "app", "dev", "ai",
+        "me", "info", "xyz", "online", "site", "tech"
+    ];
+    const DNS_API = "https://dns.google/resolve";
+    const CHECK_DELAY_MS = 200;
+    const RDAP_TIMEOUT_MS = 5000;
+
+    let currentMode = "single";
+    let isSearching = false;
+
+    /* ========================================
+       Utility: fetch with timeout
+    ======================================== */
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const resp = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(tid);
+            return resp;
+        } catch (e) {
+            clearTimeout(tid);
+            throw e;
+        }
+    }
+
+    /* ========================================
+       Utility: escape HTML
+    ======================================== */
+    function esc(str) {
+        const d = document.createElement("div");
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    /* ========================================
+       Utility: format date string
+    ======================================== */
+    function fmtDate(s) {
+        if (!s || s === "Unknown") return "Unknown";
+        try {
+            return new Date(s).toLocaleDateString("en-US", { year:"numeric", month:"short", day:"numeric" });
+        } catch { return s; }
+    }
+
+    /* ========================================
+       Utility: sleep
+    ======================================== */
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    /* ========================================
+       DNS Check via Google DoH
+    ======================================== */
+    async function checkDNS(domain) {
+        try {
+            // A record
+            const aResp = await fetchWithTimeout(`${DNS_API}?name=${encodeURIComponent(domain)}&type=A`, {}, 6000);
+            const aData = await aResp.json();
+            if (aData.Status === 0 && aData.Answer && aData.Answer.length > 0) {
+                return { found: true, type: "A", records: aData.Answer };
+            }
+            // NS record
+            const nsResp = await fetchWithTimeout(`${DNS_API}?name=${encodeURIComponent(domain)}&type=NS`, {}, 6000);
+            const nsData = await nsResp.json();
+            if (nsData.Status === 0 && nsData.Answer && nsData.Answer.length > 0) {
+                return { found: true, type: "NS", records: nsData.Answer };
+            }
+            // NXDOMAIN
+            if (aData.Status === 3) return { found: false, nxDomain: true };
+            return { found: false };
+        } catch (e) {
+            return { found: false, error: e.message };
+        }
+    }
+
+    /* ========================================
+       RDAP Check
+    ======================================== */
+    async function checkRDAP(domain) {
+        const tld = domain.split(".").pop().toLowerCase();
+        let rdapUrl;
+        if (tld === "com" || tld === "net") {
+            rdapUrl = `https://rdap.verisign.com/${tld}/v1/domain/${domain}`;
+        } else if (tld === "org") {
+            rdapUrl = `https://rdap.publicinterestregistry.org/rdap/domain/${domain}`;
+        } else if (tld === "ch" || tld === "li") {
+            rdapUrl = `https://rdap.nic.${tld}/domain/${domain}`;
+        } else {
+            rdapUrl = `https://rdap.org/domain/${domain}`;
+        }
+        try {
+            const resp = await fetchWithTimeout(rdapUrl, {
+                headers: { "Accept": "application/rdap+json" }
+            }, RDAP_TIMEOUT_MS);
+            if (resp.ok) return await resp.json();
+            return null;
+        } catch (e) {
+            return null; // CORS or timeout — graceful fallback
+        }
+    }
+
+    /* ========================================
+       Extract info from RDAP response
+    ======================================== */
+    function extractRDAPInfo(data) {
+        const info = { registrar:"Unknown", regDate:"Unknown", expDate:"Unknown", statuses:[], nameservers:[] };
+        if (!data) return info;
+        // Registrar
+        (data.entities || []).forEach(ent => {
+            if (ent.roles && ent.roles.includes("registrar")) {
+                const vc = ent.vcardArray;
+                if (vc && vc[1] && Array.isArray(vc[1])) {
+                    vc[1].forEach(entry => {
+                        if ((entry[0]==="fn"||entry[0]==="org") && entry[3]) info.registrar = entry[3];
+                    });
+                }
+            }
+        });
+        // Dates
+        (data.events || []).forEach(ev => {
+            if (ev.eventAction === "registration") info.regDate = ev.eventDate || "Unknown";
+            if (ev.eventAction === "expiration") info.expDate = ev.eventDate || "Unknown";
+        });
+        info.statuses = data.status || [];
+        info.nameservers = (data.nameservers || []).map(n => n.ldhName || n.unicodeName || "").filter(Boolean);
+        return info;
+    }
+
+    /* ========================================
+       Mode Toggle
+    ======================================== */
+    function setMode(mode) {
+        currentMode = mode;
+        const input = document.getElementById("searchInput");
+        const hint = document.getElementById("hintText");
+        document.querySelectorAll(".mode-btn").forEach(btn => {
+            const active = btn.dataset.mode === mode;
+            btn.classList.toggle("active", active);
+            btn.setAttribute("aria-selected", active);
+        });
+        if (mode === "single") {
+            input.placeholder = "Enter domain name (e.g. myproject.com)";
+            hint.textContent = "Enter a full domain name to check availability and registration details";
+        } else {
+            input.placeholder = "Enter a keyword (e.g. myproject)";
+            hint.textContent = "Check availability across " + TOP_TLDS.length + " popular TLDs simultaneously";
+        }
+        input.focus();
+    }
+
+    /* ========================================
+       Input Validation
+    ======================================== */
+    function validateInput(val) {
+        if (!val || !val.trim()) { showToast("Please enter a domain name or keyword","warning"); return false; }
+        const c = val.trim().toLowerCase();
+        if (currentMode === "single") {
+            if (!c.includes(".")) { showToast("Include the TLD — e.g. example.com","warning"); return false; }
+            if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(c)) {
+                showToast("Invalid domain format. Use letters, numbers, and hyphens.","warning"); return false;
+            }
+        } else {
+            if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(c)) {
+                showToast("Invalid keyword. Use letters, numbers, and hyphens only.","warning"); return false;
+            }
+        }
+        return true;
+    }
+
+    /* ========================================
+       Search Button State
+    ======================================== */
+    function updateSearchBtn(loading) {
+        const btn = document.getElementById("searchBtn");
+        const txt = document.getElementById("searchBtnText");
+        const ico = document.getElementById("searchBtnIcon");
+        btn.disabled = loading;
+        txt.textContent = loading ? "Checking..." : "Search";
+        ico.className = loading ? "fas fa-spinner fa-spin text-sm" : "fas fa-arrow-right text-sm";
+    }
+
+    /* ========================================
+       Main Search Handler
+    ======================================== */
+    async function handleSearch() {
+        if (isSearching) return;
+        const raw = document.getElementById("searchInput").value;
+        if (!validateInput(raw)) return;
+        const query = raw.trim().toLowerCase();
+        isSearching = true;
+        updateSearchBtn(true);
+        try {
+            if (currentMode === "single") await checkSingleDomain(query);
+            else await checkMultiTLD(query);
+        } catch (e) {
+            document.getElementById("resultsContainer").innerHTML = `
+                <div class="result-card rounded-2xl p-8 anim-in">
+                    <div class="flex items-center gap-3 text-[#FF4757]">
+                        <i class="fas fa-exclamation-triangle text-xl"></i>
+                        <div><h3 class="font-semibold">Check Failed</h3>
+                        <p class="text-sm text-[#94A3B8] mt-1">${esc(e.message)}</p></div>
+                    </div>
+                </div>`;
+        }
+        isSearching = false;
+        updateSearchBtn(false);
+    }
+
+    /* ========================================
+       Single Domain Check
+    ======================================== */
+    async function checkSingleDomain(domain) {
+        const container = document.getElementById("resultsContainer");
+        // Loading state
+        container.innerHTML = `
+            <div class="result-card rounded-2xl p-8 anim-in">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="spinner"></div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">Checking ${esc(domain)}</h3>
+                        <p class="text-sm text-[#64748B] mt-1">Querying DNS records and RDAP registry...</p>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    <div class="skeleton h-4 w-3/4"></div>
+                    <div class="skeleton h-4 w-1/2"></div>
+                    <div class="skeleton h-4 w-2/3"></div>
+                    <div class="skeleton h-4 w-2/5"></div>
+                </div>
+            </div>`;
+
+        const [dnsResult, rdapData] = await Promise.all([checkDNS(domain), checkRDAP(domain)]);
+        const registered = dnsResult.found || rdapData !== null;
+        const rdapInfo = extractRDAPInfo(rdapData);
+        renderSingleResult(domain, registered, dnsResult, rdapInfo, rdapData !== null);
+    }
+
+    /* ========================================
+       Render Single Domain Result
+    ======================================== */
+    function renderSingleResult(domain, registered, dnsResult, rdapInfo, hasRDAP) {
+        const container = document.getElementById("resultsContainer");
+        const avail = !registered;
+
+        // DNS records display
+        let dnsRows = "";
+        if (dnsResult && dnsResult.found && dnsResult.records) {
+            dnsResult.records.slice(0, 5).forEach(r => {
+                dnsRows += `<div class="detail-row">
+                    <span class="text-[#64748B] text-sm">${r.type || dnsResult.type} Record</span>
+                    <span class="font-mono text-sm text-[#94A3B8] truncate max-w-[260px]">${esc(r.data)}</span>
+                </div>`;
+            });
+        }
+
+        // RDAP detail rows
+        let rdapRows = "";
+        if (rdapInfo) {
+            if (rdapInfo.registrar !== "Unknown") rdapRows += `<div class="detail-row"><span class="text-[#64748B] text-sm">Registrar</span><span class="text-[#E2E8F0] text-sm">${esc(rdapInfo.registrar)}</span></div>`;
+            if (rdapInfo.regDate !== "Unknown") rdapRows += `<div class="detail-row"><span class="text-[#64748B] text-sm">Registration Date</span><span class="text-[#E2E8F0] text-sm">${fmtDate(rdapInfo.regDate)}</span></div>`;
+            if (rdapInfo.expDate !== "Unknown") rdapRows += `<div class="detail-row"><span class="text-[#64748B] text-sm">Expiration Date</span><span class="text-[#E2E8F0] text-sm">${fmtDate(rdapInfo.expDate)}</span></div>`;
+            if (rdapInfo.nameservers.length > 0) rdapRows += `<div class="detail-row"><span class="text-[#64748B] text-sm">Name Servers</span><span class="font-mono text-xs text-[#94A3B8] max-w-[280px] text-right truncate">${esc(rdapInfo.nameservers.slice(0,3).join(", "))}</span></div>`;
+            if (rdapInfo.statuses.length > 0) rdapRows += `<div class="detail-row"><span class="text-[#64748B] text-sm">Status</span><span class="font-mono text-xs text-[#94A3B8] max-w-[280px] text-right truncate">${esc(rdapInfo.statuses.slice(0,3).join(", "))}</span></div>`;
+        }
+
+        const note = avail
+            ? "No DNS records or RDAP data found. This domain appears to be available for registration."
+            : hasRDAP ? "Domain is registered and active in the RDAP registry." : "Domain has DNS records. Detailed RDAP data could not be retrieved (CORS restrictions may apply).";
+
+        const keyword = domain.split(".")[0];
+
+        container.innerHTML = `
+            <div class="result-card ${avail?'available-card pulse-glow':'registered-card'} rounded-2xl p-6 sm:p-8 anim-in">
+                <!-- Header -->
+                <div class="flex items-start justify-between flex-wrap gap-4 mb-5">
+                    <div>
+                        <h2 class="text-2xl sm:text-3xl font-bold text-white font-mono tracking-tight">${esc(domain)}</h2>
+                        <div class="mt-3">
+                            <span class="status-badge ${avail?'badge-available':'badge-registered'}">
+                                <i class="fas ${avail?'fa-check-circle':'fa-lock'} text-xs"></i>
+                                ${avail?'Available':'Registered'}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="copyToClipboard('${esc(domain)}')" class="text-[#64748B] hover:text-[#00E5A0] transition-colors text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[rgba(148,163,184,0.1)] hover:border-[rgba(0,229,160,0.3)]" aria-label="Copy domain">
+                            <i class="fas fa-copy"></i><span class="hidden sm:inline">Copy</span>
+                        </button>
+                        <button onclick="retrySingle('${esc(domain)}')" class="text-[#64748B] hover:text-[#0EA5E9] transition-colors text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[rgba(148,163,184,0.1)] hover:border-[rgba(14,165,233,0.3)]" aria-label="Re-check domain">
+                            <i class="fas fa-redo"></i><span class="hidden sm:inline">Re-check</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Details -->
+                <div class="border-t border-[rgba(148,163,184,0.08)] pt-4">
+                    ${dnsRows}${rdapRows}
+                    <div class="pt-4 mt-2">
+                        <p class="text-sm text-[#475569] flex items-start gap-2">
+                            <i class="fas fa-info-circle mt-0.5 shrink-0"></i>
+                            <span>${note}</span>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-6 pt-5 border-t border-[rgba(148,163,184,0.08)] flex flex-wrap gap-3">
+                    ${avail ? `
+                        <a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(domain)}"
+                           target="_blank" rel="noopener noreferrer"
+                           class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[rgba(0,229,160,0.1)] text-[#00E5A0] hover:bg-[rgba(0,229,160,0.18)] transition-colors text-sm font-semibold">
+                            <i class="fas fa-external-link-alt text-xs"></i> Register on Namecheap
+                        </a>
+                        <a href="https://tucowsdomains.com/find-a-domain/?domain=${encodeURIComponent(domain)}"
+                           target="_blank" rel="noopener noreferrer"
+                           class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[rgba(14,165,233,0.1)] text-[#0EA5E9] hover:bg-[rgba(14,165,233,0.18)] transition-colors text-sm font-semibold">
+                            <i class="fas fa-external-link-alt text-xs"></i> Check on Tucows
+                        </a>
+                    ` : `
+                        <a href="https://who.is/whois/${encodeURIComponent(domain)}"
+                           target="_blank" rel="noopener noreferrer"
+                           class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[rgba(14,165,233,0.1)] text-[#0EA5E9] hover:bg-[rgba(14,165,233,0.18)] transition-colors text-sm font-semibold">
+                            <i class="fas fa-external-link-alt text-xs"></i> Full WHOIS
+                        </a>
+                    `}
+                    <button onclick="switchToMulti('${esc(keyword)}')" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[rgba(148,163,184,0.06)] text-[#94A3B8] hover:bg-[rgba(148,163,184,0.12)] hover:text-white transition-colors text-sm font-medium border border-[rgba(148,163,184,0.08)]">
+                        <i class="fas fa-globe text-xs"></i> Check all TLDs for "${esc(keyword)}"
+                    </button>
+                </div>
+            </div>`;
+    }
+
+    /* ========================================
+       Retry / Switch helpers
+    ======================================== */
+    async function retrySingle(domain) {
+        if (isSearching) return;
+        isSearching = true;
+        updateSearchBtn(true);
+        await checkSingleDomain(domain);
+        isSearching = false;
+        updateSearchBtn(false);
+    }
+
+    function switchToMulti(keyword) {
+        document.getElementById("searchInput").value = keyword;
+        setMode("multi");
+        handleSearch();
+    }
+
+    /* ========================================
+       Multi-TLD Check
+    ======================================== */
+    async function checkMultiTLD(keyword) {
+        const container = document.getElementById("resultsContainer");
+        const total = TOP_TLDS.length;
+
+        // Build initial grid
+        let itemsHTML = "";
+        TOP_TLDS.forEach(tld => {
+            itemsHTML += `
+                <div id="tld-${tld}" class="tld-item tld-checking">
+                    <div class="flex items-center justify-between">
+                        <span class="font-mono font-bold text-lg text-[#E2E8F0]">.${tld}</span>
+                        <span class="status-badge badge-checking text-[10px]">
+                            <span class="w-3 h-3 border-2 border-[#F59E0B] border-t-transparent rounded-full inline-block animate-spin"></span>
+                            Checking
+                        </span>
+                    </div>
+                    <div class="text-xs text-[#3E4C63] mt-1.5 font-mono">${esc(keyword)}.${tld}</div>
+                </div>`;
+        });
+
+        container.innerHTML = `
+            <div class="anim-in">
+                <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <h2 class="text-xl sm:text-2xl font-bold text-white">Results for "<span class="text-[#00E5A0]">${esc(keyword)}</span>"</h2>
+                    <span id="tldCounter" class="text-sm text-[#64748B] font-mono">0 / ${total} checked</span>
+                </div>
+                <div class="progress-track mb-6">
+                    <div id="tldBar" class="progress-fill" style="width:0%"></div>
+                </div>
+                <div id="tldGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 stagger">
+                    ${itemsHTML}
+                </div>
+                <div id="tldSummary"></div>
+            </div>`;
+
+        let checked = 0;
+        let availableList = [];
+
+        for (const tld of TOP_TLDS) {
+            const domain = `${keyword}.${tld}`;
+            try {
+                const dns = await checkDNS(domain);
+                let taken = dns.found;
+                // Double-check with RDAP if DNS says no
+                if (!taken) {
+                    const rdap = await checkRDAP(domain);
+                    if (rdap) taken = true;
+                }
+                updateTLDItem(tld, domain, taken);
+                if (!taken) availableList.push(domain);
+            } catch {
+                setTLDItemError(tld, domain);
+            }
+            checked++;
+            const counter = document.getElementById("tldCounter");
+            const bar = document.getElementById("tldBar");
+            if (counter) counter.textContent = `${checked} / ${total} checked`;
+            if (bar) bar.style.width = `${(checked / total) * 100}%`;
+            if (checked < total) await sleep(CHECK_DELAY_MS);
+        }
+
+        // Summary
+        renderMultiSummary(keyword, availableList, total);
+    }
+
+    function updateTLDItem(tld, domain, taken) {
+        const el = document.getElementById("tld-" + tld);
+        if (!el) return;
+        if (taken) {
+            el.className = "tld-item tld-registered";
+            el.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <span class="font-mono font-bold text-lg text-[#94A3B8]">.${tld}</span>
+                    <span class="status-badge badge-registered text-[10px]"><i class="fas fa-lock text-[8px]"></i> Taken</span>
+                </div>
+                <div class="text-xs text-[#3E4C63] mt-1.5 font-mono">${esc(domain)}</div>
+                <button onclick="retrySingle('${esc(domain)}')" class="mt-2 text-[10px] text-[#64748B] hover:text-[#0EA5E9] transition-colors flex items-center gap-1">
+                    <i class="fas fa-search text-[8px]"></i> Details
+                </button>`;
+        } else {
+            el.className = "tld-item tld-available";
+            el.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <span class="font-mono font-bold text-lg text-[#00E5A0]">.${tld}</span>
+                    <span class="status-badge badge-available text-[10px]"><i class="fas fa-check-circle text-[8px]"></i> Available</span>
+                </div>
+                <div class="text-xs text-[#3E4C63] mt-1.5 font-mono">${esc(domain)}</div>
+                <div class="mt-2 flex gap-2">
+                    <a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(domain)}" target="_blank" rel="noopener noreferrer"
+                       class="text-[10px] text-[#00E5A0] hover:text-[#00FFB3] transition-colors flex items-center gap-1">
+                        <i class="fas fa-external-link-alt text-[8px]"></i> Register
+                    </a>
+                    <button onclick="copyToClipboard('${esc(domain)}')" class="text-[10px] text-[#64748B] hover:text-[#00E5A0] transition-colors flex items-center gap-1">
+                        <i class="fas fa-copy text-[8px]"></i> Copy
+                    </button>
+                </div>`;
+        }
+    }
+
+    function setTLDItemError(tld, domain) {
+        const el = document.getElementById("tld-" + tld);
+        if (!el) return;
+        el.className = "tld-item tld-error";
+        el.innerHTML = `
+            <div class="flex items-center justify-between">
+                <span class="font-mono font-bold text-lg text-[#64748B]">.${tld}</span>
+                <span class="text-[10px] text-[#64748B]"><i class="fas fa-question-circle"></i> Unknown</span>
+            </div>
+            <div class="text-xs text-[#3E4C63] mt-1.5 font-mono">${esc(domain)}</div>`;
+    }
+
+    function renderMultiSummary(keyword, availableList, total) {
+        const box = document.getElementById("tldSummary");
+        if (!box) return;
+        const count = availableList.length;
+        const isGreat = count > 0;
+        box.innerHTML = `
+            <div class="mt-8 p-5 rounded-2xl border ${isGreat ? 'border-[rgba(0,229,160,0.25)] bg-[rgba(0,229,160,0.04)]' : 'border-[rgba(148,163,184,0.1)] bg-[rgba(148,163,184,0.03)]'} anim-in">
+                <div class="flex items-center gap-3 mb-4">
+                    <i class="fas ${isGreat ? 'fa-chart-bar text-[#00E5A0]' : 'fa-search text-[#64748B]'} text-lg"></i>
+                    <div>
+                        <span class="text-[#E2E8F0] font-semibold">${count} of ${total} domains available</span>
+                        ${isGreat
+                            ? '<span class="text-[#00E5A0] text-sm ml-2">Great options found!</span>'
+                            : '<span class="text-[#64748B] text-sm ml-2">Consider trying a different keyword</span>'}
+                    </div>
+                </div>
+                ${count > 0 ? `
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        ${availableList.map(d => `
+                            <button onclick="copyToClipboard('${esc(d)}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[rgba(0,229,160,0.08)] text-[#00E5A0] text-sm font-mono hover:bg-[rgba(0,229,160,0.16)] transition-colors border border-[rgba(0,229,160,0.15)]">
+                                ${esc(d)} <i class="fas fa-copy text-[10px]"></i>
+                            </button>
+                        `).join("")}
+                    </div>
+                    <a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(keyword)}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[rgba(0,229,160,0.1)] text-[#00E5A0] hover:bg-[rgba(0,229,160,0.18)] transition-colors text-sm font-semibold">
+                        <i class="fas fa-external-link-alt text-xs"></i> View all on Namecheap
+                    </a>
+                ` : ''}
+            </div>`;
+    }
+
+    /* ========================================
+       Clipboard
+    ======================================== */
+    function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard","success")).catch(() => fallbackCopy(text));
+        } else {
+            fallbackCopy(text);
+        }
+    }
+    function fallbackCopy(text) {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); showToast("Copied to clipboard","success"); }
+        catch { showToast("Copy failed — please copy manually","warning"); }
+        document.body.removeChild(ta);
+    }
+
+    /* ========================================
+       Toast System
+    ======================================== */
+    function showToast(message, type) {
+        type = type || "info";
+        const container = document.getElementById("toastContainer");
+        const icons = { success:"fa-check-circle", warning:"fa-exclamation-triangle", error:"fa-times-circle", info:"fa-info-circle" };
+        const colors = { success:"#00E5A0", warning:"#F59E0B", error:"#FF4757", info:"#0EA5E9" };
+        const toast = document.createElement("div");
+        toast.className = "toast-item";
+        toast.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="color:${colors[type]||colors.info}"></i><span class="text-sm text-[#E2E8F0]">${esc(message)}</span>`;
+        container.appendChild(toast);
+        requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add("show")));
+        setTimeout(() => {
+            toast.classList.remove("show");
+            setTimeout(() => toast.remove(), 400);
+        }, 3000);
+    }
+
+    /* ========================================
+       Init
+    ======================================== */
+    document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("searchInput").focus();
+    });
+    </script>
+</body>
+</html>
